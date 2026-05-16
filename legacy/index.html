@@ -9802,8 +9802,35 @@ print(f"لديك الآن {len(users)} مستخدمين.")
                 }
             });
         }
-        // --- Initialization & Global State ---
-        let uploadedFile = ""; // Global variable to store file data
+        // --- Initialization ---
+
+        // Render skills when the page loads
+        window.onload = function () {
+            renderSkills();
+            // Set the default active section on load
+            showSection('about'); // Default to 'About' section
+        };
+
+        /**
+         * Toggles the display of an element (e.g., expanding/collapsing content).
+         * Updates ARIA attributes for accessibility.
+         * @param {string} id - The ID of the element to toggle.
+         */
+        function toggleSection(id) {
+            const el = document.getElementById(id);
+            if (!el) return;
+
+            const isExpanded = el.classList.contains("active");
+            el.classList.toggle("active");
+            el.style.display = isExpanded ? "none" : "block";
+
+            const controllingElement = el.previousElementSibling;
+            if (controllingElement && controllingElement.tagName === 'H3') {
+                controllingElement.setAttribute('aria-expanded', !isExpanded);
+            }
+        }
+
+        // --- Skills Management ---
 
         /**
          * Renders the saved skills from localStorage to the skills list.
@@ -9874,7 +9901,7 @@ print(f"لديك الآن {len(users)} مستخدمين.")
                 file: uploadedFile // Use the globally stored file data
             });
 
-            localStorage.setItem("skills", JSON.stringify(skills));
+            localStorage.setItem("skills", JSON.stringify(skills)); // Corrected JSON.stringify
 
             // Clear input fields and preview
             titleInput.value = "";
@@ -9892,51 +9919,11 @@ print(f"لديك الآن {len(users)} مستخدمين.")
         function deleteSkill(index) {
             const skills = JSON.parse(localStorage.getItem("skills")) || [];
             if (index >= 0 && index < skills.length) {
-                skills.splice(index, 1);
+                skills.splice(index, 1); // Remove the skill at the specified index
                 localStorage.setItem("skills", JSON.stringify(skills));
-                renderSkills();
+                renderSkills(); // Update the displayed list
             }
         }
-
-        /**
-         * Previews the uploaded file (image or PDF).
-         */
-        function previewFile() {
-            let file = document.getElementById("fileUpload").files[0];
-            let preview = document.getElementById("filePreview");
-
-            if (!file) return;
-
-            let reader = new FileReader();
-            reader.onload = function (e) {
-                uploadedFile = e.target.result; // Store the file data URL
-                if (file.type.startsWith("image")) {
-                    preview.innerHTML = `<img src="${uploadedFile}" class="preview-img" alt="File preview">`;
-                } else if (file.type === "application/pdf") {
-                    preview.innerHTML = `<div class="pdf-box"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:6px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> تم رفع ملف PDF</div>`;
-                }
-            }
-            reader.readAsDataURL(file);
-        }
-
-        /**
-         * Toggles the display of an element (e.g., expanding/collapsing content).
-         * @param {string} id - The ID of the element to toggle.
-         */
-        function toggleSection(id) {
-            const el = document.getElementById(id);
-            if (!el) return;
-
-            const isExpanded = el.classList.contains("active");
-            el.classList.toggle("active");
-            el.style.display = isExpanded ? "none" : "block";
-
-            const controllingElement = el.previousElementSibling;
-            if (controllingElement && controllingElement.tagName === 'H3') {
-                controllingElement.setAttribute('aria-expanded', !isExpanded);
-            }
-        }
-
 
         // --- Chat Functionality ---
 
@@ -10525,6 +10512,32 @@ ${subjList}
             }
         };
 
+        // ---- AI Provider Configuration (قابل للتبديل بين مزودات الخدمة) ----
+        const AI_PROVIDERS = {
+            groq: {
+                name: 'Groq (سريع ومجاني)',
+                endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+                defaultModel: 'llama-3.3-70b-versatile',
+                models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it'],
+                docsUrl: 'https://console.groq.com/keys',
+                getKey: () => localStorage.getItem('ai_api_key') || ''
+            },
+            openrouter: {
+                name: 'OpenRouter',
+                endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+                defaultModel: 'meta-llama/llama-3-70b-instruct',
+                models: ['meta-llama/llama-3-70b-instruct', 'mistralai/mistral-7b-instruct', 'openai/gpt-4o-mini'],
+                docsUrl: 'https://openrouter.ai/keys',
+                getKey: () => localStorage.getItem('ai_api_key') || ''
+            }
+        };
+
+        let activeProvider = localStorage.getItem('ai_active_provider') || 'groq';
+
+        function getAIProvider() {
+            return AI_PROVIDERS[activeProvider] || AI_PROVIDERS.groq;
+        }
+
         // ---- AI Conversation State ----
         let aiConversation = [];
         let ragLastContext = '';
@@ -10628,7 +10641,7 @@ ${subjList}
             return html;
         }
 
-        // ---- Core AI Function with RAG ----
+        // ---- Core AI Function with RAG (Provider-Agnostic) ----
         async function askAI(query) {
             const sendBtn = document.getElementById('aiSendBtn');
             sendBtn.disabled = true;
@@ -10637,17 +10650,14 @@ ${subjList}
             aiConversation.push({ role: 'user', content: query });
 
             try {
-                // Initialize RAG engine if needed
                 await RAGEngine.ensureInitialized();
 
-                // Retrieve relevant context
                 const relevantChunks = RAGEngine.retrieve(query);
                 const context = RAGEngine.formatContext(relevantChunks);
                 ragLastContext = context;
 
                 const systemPrompt = RAGEngine.buildSystemPrompt();
 
-                // Build augmented prompt
                 let augmentedPrompt = systemPrompt;
                 if (context) {
                     augmentedPrompt += `\n\n## معلومات مسترجعة من موقع الكلية الرسمي (استخدمها للإجابة):\n${context}\n\nاستخدم المعلومات أعلاه للإجابة على سؤال المستخدم. إذا كانت المعلومات كافية، قدم إجابة دقيقة ومفصلة. إذا لم تكن كافية، استخدم معرفتك العامة عن الكلية مع الإشارة إلى أن المعلومات من المصادر الرسمية.`;
@@ -10655,22 +10665,45 @@ ${subjList}
                     augmentedPrompt += '\n\nملاحظة: تعذر استرجاع معلومات إضافية من موقع الكلية حالياً. استخدم قاعدة معرفتك الداخلية للإجابة.';
                 }
 
-                const apiKey = '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';
-                const apiUrl = 'https://openrouter.ai/api/v1/chat/completions';
+                const provider = getAIProvider();
+                const apiKey = provider.getKey();
+
+                if (!apiKey) {
+                    hideTyping();
+                    aiConversation.pop();
+                    const setupHtml = `
+            <div style="text-align:right;direction:rtl;padding:4px;">
+                <p style="margin:0 0 8px;">🔑 يرجى إعداد مفتاح API مجاني للبدء:</p>
+                <ol style="text-align:right;padding-right:20px;margin:4px 0 10px;font-size:13px;">
+                    <li>اذهب إلى <a href="${provider.docsUrl}" target="_blank" style="color:var(--accent-color);">${provider.docsUrl}</a></li>
+                    <li>سجل حساباً مجانياً</li>
+                    <li>انسخ المفتاح والصقه أدناه</li>
+                </ol>
+                <div style="display:flex;gap:8px;">
+                    <input id="aiKeyInput" type="password" placeholder="ألصق المفتاح هنا..."
+                           style="flex:1;padding:10px 14px;border:2px solid var(--accent-color);border-radius:8px;font-size:14px;text-align:right;direction:rtl;">
+                    <button onclick="saveAIKey()" style="padding:10px 20px;background:var(--accent-color);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:bold;">حفظ</button>
+                </div>
+                <p style="font-size:11px;color:#888;margin-top:6px;">💡 المفتاح يُحفظ محلياً في متصفحك فقط</p>
+            </div>`;
+                    addMessageToChat('assistant', setupHtml, false);
+                    sendBtn.disabled = false;
+                    return;
+                }
 
                 const messages = [
                     { role: 'system', content: augmentedPrompt },
                     ...aiConversation
                 ];
 
-                const response = await fetch(apiUrl, {
+                const response = await fetch(provider.endpoint, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${apiKey}`,
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        model: 'x-ai/grok-4.3',
+                        model: provider.defaultModel,
                         messages: messages,
                         temperature: 0.3,
                         max_tokens: 2048
@@ -10684,8 +10717,10 @@ ${subjList}
                     let friendlyMsg;
                     if (response.status === 429) {
                         friendlyMsg = '⏰ الخدمة مزدحمة حالياً، يرجى المحاولة بعد قليل.';
-                    } else if (response.status === 401) {
-                        friendlyMsg = '🔒 مشكلة في مفتاح الاتصال، يرجى التواصل مع الدعم الفني.';
+                    } else if (response.status === 401 || response.status === 403) {
+                        friendlyMsg = `🔒 مفتاح API غير صالح. يرجى <a href="#" onclick="showAIKeySettings();return false;" style="color:var(--accent-color);text-decoration:underline;">تحديث المفتاح</a>.`;
+                    } else if (response.status >= 500) {
+                        friendlyMsg = '🔧 الخدمة غير متاحة حالياً، يرجى المحاولة لاحقاً.';
                     } else {
                         friendlyMsg = `❌ ${escapeHtml(data?.error?.message || `خطأ ${response.status}`)}`;
                     }
@@ -10749,6 +10784,49 @@ ${subjList}
             </div>`;
         }
 
+        // ---- API Key Management ----
+        function saveAIKey() {
+            const input = document.getElementById('aiKeyInput');
+            if (!input) return;
+            const key = input.value.trim();
+            if (!key) return;
+            localStorage.setItem('ai_api_key', key);
+            const container = document.getElementById('aiMessages');
+            const lastMsg = container.querySelector('.ai-message:last-child');
+            if (lastMsg) lastMsg.remove();
+            addMessageToChat('assistant', '✅ تم حفظ مفتاح API بنجاح! يمكنك الآن إرسال سؤالك.', false);
+            const lastUserQuery = aiConversation[aiConversation.length - 1]?.content;
+            if (lastUserQuery) {
+                aiConversation.pop();
+                setTimeout(() => askAI(lastUserQuery), 500);
+            }
+        }
+
+        function showAIKeySettings() {
+            const container = document.getElementById('aiMessages');
+            const welcome = container.querySelector('.ai-welcome');
+            if (welcome) welcome.remove();
+            const provider = getAIProvider();
+            const html = `
+            <div style="text-align:right;direction:rtl;padding:8px;">
+                <h4 style="margin:0 0 10px;color:var(--accent-color);">🔑 إعدادات API</h4>
+                <p style="margin:0 0 6px;font-size:13px;">مزود الخدمة الحالي: <strong>${provider.name}</strong></p>
+                <p style="margin:0 0 6px;font-size:13px;">للحصول على مفتاح مجاني:</p>
+                <ol style="text-align:right;padding-right:20px;margin:4px 0 10px;font-size:13px;">
+                    <li>ادخل إلى <a href="${provider.docsUrl}" target="_blank" style="color:var(--accent-color);">${provider.docsUrl}</a></li>
+                    <li>سجل حساباً مجانياً وانسخ المفتاح</li>
+                    <li>ألصق المفتاح في الحقل أدناه</li>
+                </ol>
+                <div style="display:flex;gap:8px;">
+                    <input id="aiKeyInput" type="password" placeholder="ألصق المفتاح هنا..."
+                           style="flex:1;padding:10px 14px;border:2px solid var(--accent-color);border-radius:8px;font-size:14px;text-align:right;direction:rtl;">
+                    <button onclick="saveAIKey()" style="padding:10px 20px;background:var(--accent-color);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:bold;">حفظ</button>
+                </div>
+                <p style="font-size:11px;color:#888;margin-top:8px;">💡 المفتاح يُحفظ محلياً في متصفحك فقط. غير مشارك مع أي جهة خارجية.</p>
+            </div>`;
+            addMessageToChat('assistant', html, false);
+        }
+
         // ---- Initialize on page load ----
         (function () {
             const input = document.getElementById('aiInput');
@@ -10771,12 +10849,142 @@ ${subjList}
             }
         })();
 
-    </script>
+        // --- Helper Functions ---
 
+        /**
+         * Searches for courses based on input and filters the display.
+         * Note: This function is defined but not called in the provided HTML.
+         * It might be intended for a search bar that is not present.
+         */
+        function searchPlaylists() {
+            const input = document.getElementById("searchInput").value.toLowerCase(); // Assuming a searchInput element exists
+            const items = document.querySelectorAll(".course"); // Assuming elements with class 'course' exist
+
+            items.forEach(item => {
+                if (item.innerText.toLowerCase().includes(input)) {
+                    item.style.display = "block";
+                } else {
+                    item.style.display = "none";
+                }
+            });
+        }
+
+        /**
+         * Toggles department content visibility.
+         * @param {HTMLElement} el - The department title element.
+         */
+        function toggleDept(el) {
+            let content = el.nextElementSibling;
+            if (!content) return;
+            let isOpen = content.classList.contains("show");
+
+            if (isOpen) {
+                content.classList.remove("show");
+                el.querySelector(".arrow")?.classList.remove("rotate");
+                el.setAttribute('aria-expanded', 'false');
+            } else {
+                content.classList.add("show");
+                el.querySelector(".arrow")?.classList.add("rotate");
+                el.setAttribute('aria-expanded', 'true');
+            }
+        }
+
+        let uploadedFile = ""; // Global variable to store file data
+
+        /**
+         * Previews the uploaded file (image or PDF).
+         */
+        function previewFile() {
+            let file = document.getElementById("fileUpload").files[0];
+            let preview = document.getElementById("filePreview");
+
+            if (!file) return;
+
+            let reader = new FileReader();
+
+            reader.onload = function (e) {
+                uploadedFile = e.target.result; // Store the file data URL
+
+                if (file.type.startsWith("image")) {
+                    preview.innerHTML = `<img src="${uploadedFile}" class="preview-img" alt="File preview">`;
+                }
+                else if (file.type === "application/pdf") {
+                    preview.innerHTML = `<div class="pdf-box"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:6px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> تم رفع ملف PDF</div>`;
+                }
+            }
+
+            reader.readAsDataURL(file);
+        }
+
+        // Re-implementing addSkill and renderSkills to use the global uploadedFile variable correctly
+        /**
+         * Adds a new skill to localStorage and re-renders the list.
+         */
+        function addSkill() {
+            const titleInput = document.getElementById("skillTitle");
+            const descInput = document.getElementById("skillDesc");
+            const title = titleInput.value.trim();
+            const desc = descInput.value.trim();
+
+            if (title === "" || desc === "") {
+                alert("الرجاء إدخال عنوان ووصف للمهارة.");
+                return;
+            }
+
+            const skills = JSON.parse(localStorage.getItem("skills")) || [];
+            skills.push({
+                title,
+                desc,
+                file: uploadedFile // Use the globally stored file data
+            });
+
+            localStorage.setItem("skills", JSON.stringify(skills)); // Corrected JSON.stringify
+
+            // Clear input fields and preview
+            titleInput.value = "";
+            descInput.value = "";
+            document.getElementById("filePreview").innerHTML = "";
+            uploadedFile = ""; // Reset uploaded file
+        }
+
+    </script>
+    <script src="script.js"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/service-worker.js');
         }
+    </script>
+    <script>
+        function showSection(id) {
+            let sections = document.querySelectorAll(".section");
+            sections.forEach(section => {
+                section.classList.remove("active");
+                section.setAttribute('aria-hidden', 'true');
+            });
+
+            let target = document.getElementById(id);
+            if (target) {
+                target.classList.add("active");
+                target.setAttribute('aria-hidden', 'false');
+            }
+
+            let navBtns = document.querySelectorAll(".bottom-nav button");
+            navBtns.forEach(btn => {
+                let onClick = btn.getAttribute('onclick');
+                if (onClick && onClick.includes(`'${id}'`)) {
+                    btn.classList.add("active");
+                    btn.setAttribute('aria-current', 'page');
+                } else {
+                    btn.classList.remove("active");
+                    btn.removeAttribute('aria-current');
+                }
+            });
+        }
+
+        // أول ما الصفحة تفتح
+        window.onload = function () {
+            // Splash screen visible by default
+        };
 
         function enterApp() {
             document.getElementById('splash-screen').style.opacity = '0';
@@ -10785,12 +10993,14 @@ ${subjList}
 
             // Call the original initialization functions
             if (typeof renderSkills === 'function') renderSkills();
-            if (typeof showSection === 'function') showSection('about');
+            showSection('about');
 
             setTimeout(() => {
                 document.getElementById('splash-screen').style.display = 'none';
             }, 800);
         }
     </script>
+    </div> <!-- End Main Application Wrapper -->
 </body>
+
 </html>
